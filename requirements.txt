@@ -1,0 +1,11 @@
+# Ingesta (dlt + DuckDB + Parquet + Kafka)
+dlt[duckdb,parquet,filesystem]>=1.29
+duckdb>=1.0
+confluent-kafka>=2.4
+# Tests
+pytest>=8
+faker>=25
+httpx>=0.27
+# Para ejecutar la API sintética en local
+fastapi>=0.110
+uvicorn>=0.29

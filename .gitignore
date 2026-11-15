@@ -1,0 +1,6 @@
+.dlt/secrets.toml
+data/
+__pycache__/
+.pytest_cache/
+*.duckdb
+.env

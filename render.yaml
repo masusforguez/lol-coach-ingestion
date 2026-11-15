@@ -1,0 +1,32 @@
+# Despliegue de las APIs sintéticas en render.com (Blueprint).
+services:
+  - type: web
+    name: lol-synthetic-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-api.txt
+    startCommand: uvicorn synthetic_api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: RIOT_TOKEN
+        generateValue: true
+      - key: PROVIDER_TOKEN
+        generateValue: true
+      - key: VIDEO_KEY
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: RATE_LIMIT        # peticiones por ventana (simula la capa gratuita de Riot)
+        value: "120"
+      - key: RATE_WINDOW_S
+        value: "60"
+      - key: PROVIDER_CREDITS  # créditos del proveedor "de pago"
+        value: "200"
+      - key: VIDEO_DAILY_QUOTA # cuota diaria de la fuente de vídeo
+        value: "500"
+      - key: TOTAL_MATCHES
+        value: "3000"
+      - key: START_MATCHES
+        value: "400"
+      - key: FAILURE_RATE      # 0.02 = un 2 % de errores 503 aleatorios
+        value: "0.02"

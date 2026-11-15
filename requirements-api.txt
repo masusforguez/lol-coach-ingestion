@@ -1,0 +1,4 @@
+# Solo lo necesario para desplegar la API sintética en Render
+fastapi>=0.110
+uvicorn>=0.29
+faker>=25
