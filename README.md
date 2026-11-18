@@ -26,8 +26,9 @@ Los datos son inventados (generados con Faker): no vienen de Riot ni de ninguna 
 synthetic_api/   generator.py (datos deterministas) · main.py (FastAPI con límites)
 ingestion/       clients.py · transform.py · sources.py (dlt) · pipeline.py
                  bus.py · producer.py · consumer.py (Kafka) · warehouse.py (DuckDB) · run.py (CLI)
+consume_kafka_retry.py  consumidor Kafka con grupo persistente y lago reutilizable
 tests/           41 pruebas (40 automáticas + 1 que requiere un broker Kafka real)
-.dlt/            config.toml (se sube) · secrets.toml.example (copiar a secrets.toml, no se sube)
+.dlt/            config.toml (se sube) · secrets.toml (local, ignorado por Git)
 render.yaml · docker-compose.yml · requirements*.txt
 ```
 
@@ -50,9 +51,18 @@ python -m ingestion.run pipeline --max-timelines 20   # bus en memoria, sin Dock
 python -m ingestion.run report                        # benchmarks y comparación de un jugador
 ```
 
-**Con Kafka real:** `docker compose up -d`, y después `KAFKA_BOOTSTRAP=localhost:9092 python -m ingestion.run produce --bus kafka` y lo mismo con `consume`.
+**Con Kafka real (PowerShell):**
 
-**En Render:** subir el repositorio a GitHub, en Render elegir *New > Blueprint* y apuntar a `render.yaml`. Las claves se generan solas; cópialas del panel a `.dlt/secrets.toml` y pon la URL en `.dlt/config.toml` (o en `SOURCES__API__BASE_URL`).
+```powershell
+docker compose up -d kafka
+$env:KAFKA_BOOTSTRAP = "localhost:9092"
+python -m ingestion.run produce --bus kafka --state data/state_kafka --max-timelines 5
+python .\consume_kafka_retry.py
+```
+
+El consumidor reutiliza siempre `data/lake_kafka` y `data/state_kafka`; el grupo `lake-loader-kafka` conserva sus offsets entre ejecuciones. Un grupo nuevo empieza a leer desde el principio de los mensajes retenidos en Kafka, por lo que su primera ejecución puede volver a añadir filas al lago Parquet. DuckDB deduplica las vistas `silver_*`; después, el mismo grupo continúa desde los offsets confirmados.
+
+**En Render:** subir el repositorio a GitHub y en Render elegir *New > Blueprint* apuntando a `render.yaml`. Copia las claves que genera el panel al archivo local `.dlt/secrets.toml` (no se sube a GitHub) y configura la URL en `.dlt/config.toml` o en `SOURCES__API__BASE_URL`.
 
 ## Cómo se construyó (incremental, un paso por test)
 
@@ -73,10 +83,10 @@ python -m ingestion.run report                        # benchmarks y comparació
 - **Timelines con presupuesto.** Cuestan una petición por partida y van más lentos que las partidas; lo pendiente se conserva y se completa en la siguiente pasada.
 - **Cuota agotada no es un fallo.** Se carga lo que se pudo y se continúa en la siguiente ejecución sin perder el cursor.
 
-## Limitaciones (lo que NO está comprobado)
+## Pruebas y limitaciones
 
-- **`KafkaBus` no se ha probado contra un broker real.** El resto de la lógica sí, con un bus en memoria que cumple la misma interfaz. Hay un test de integración preparado (`KAFKA_BOOTSTRAP=localhost:9092 pytest tests/test_kafka_integration.py`).
-- **El despliegue en Render no se ha ejecutado** desde mi entorno; `render.yaml` sigue el formato estándar, pero hay que probarlo. En el plan gratuito el servicio suele dormirse tras un rato sin tráfico, y el estado en memoria (reloj, créditos, cuota) se pierde al reiniciar: tras un reinicio, borra `data/` para empezar de cero.
+- **Kafka real y el flujo productor-consumidor se probaron localmente.** El test de integración verifica publicación, confirmación y reentrega (`$env:KAFKA_BOOTSTRAP="localhost:9092"; python -m pytest -q tests/test_kafka_integration.py`).
+- **El API sintético desplegado en Render también se probó.** En el plan gratuito puede dormirse y, al reiniciarse, pierde su estado en memoria. El cursor local puede quedar por delante de los datos reiniciados; comprueba el estado antes de reiniciar la ingesta y no borres `data/` sin decidir primero qué lago o cursor quieres conservar.
 - **El destino es el disco local.** Para MinIO/S3 basta cambiar `bucket_url` y las credenciales en `secrets.toml`, como en los apuntes, pero no se ha probado aquí.
 - **Los datos sintéticos no tienen valor estadístico real.** Sirven para probar el sistema, no para sacar conclusiones sobre el juego.
 

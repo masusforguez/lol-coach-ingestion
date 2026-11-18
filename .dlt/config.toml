@@ -1,4 +1,4 @@
 # Parámetros NO sensibles (se pueden subir al repositorio).
 # Se pueden sobrescribir con variables de entorno, p. ej. SOURCES__API__BASE_URL=https://mi-api.onrender.com
 [sources.api]
-base_url = "http://127.0.0.1:8000"
+base_url = "https://lol-synthetic-api.onrender.com"
