@@ -54,6 +54,7 @@
     .pagination { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 12px; }
     .pagination[hidden] { display: none; }
     .pagination label { min-width: 100px; }
+    .table-filters { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(180px, 1fr) auto; gap: 8px; align-items: end; margin-top: 14px; }
     .row { display: flex; align-items: end; gap: 8px; }
     .row label { flex: 1; }
     .hint { margin: 10px 0 0; font-size: 12px; }
@@ -82,6 +83,7 @@
     @media (max-width: 480px) {
       main { width: min(100% - 20px, 1320px); padding-top: 22px; }
       .fields { grid-template-columns: 1fr; }
+      .table-filters { grid-template-columns: 1fr; }
       .row { align-items: stretch; flex-direction: column; }
     }
   </style>
@@ -188,6 +190,19 @@
               </select>
             </label>
           </div>
+          <div class="table-filters">
+            <label>Filtrar por campo
+              <select id="table-filter-field" disabled>
+                <option value="">Todos los campos</option>
+              </select>
+            </label>
+            <label>Valor
+              <input id="table-filter-value" type="search" list="table-filter-suggestions" placeholder="Busca en los datos cargados" disabled>
+              <datalist id="table-filter-suggestions"></datalist>
+            </label>
+            <button id="clear-table-filter" disabled>Limpiar filtro</button>
+          </div>
+          <p class="hint" id="table-filter-count">Carga una fuente para filtrar sus filas.</p>
           <h3 id="primary-table-title">Resultados</h3>
           <div class="data-table-wrap">
             <table><thead id="data-table-head"><tr><th>Sin datos</th></tr></thead><tbody id="data-table-body"><tr><td class="empty">Elige una fuente para cargar sus datos.</td></tr></tbody></table>
@@ -223,6 +238,9 @@
     let riotOffset = 0;
     let riotTotal = 0;
     let riotLoaded = false;
+    let primaryTableRows = [];
+    let relatedTableRows = [];
+    let relatedTableTitle = "";
 
     function isRemote() {
       return byId("target").value === "render";
@@ -277,21 +295,107 @@
 
     function renderPrimaryTable(title, rows) {
       byId("primary-table-title").textContent = title;
-      renderRows("data-table", rows, "La API no devolvió filas para esta consulta.");
+      primaryTableRows = rows;
+      refreshTableFilterFields();
+      applyTableFilters();
     }
 
     function renderRelatedTable(title, rows) {
       const sectionTitle = byId("related-table-title");
       const wrapper = byId("related-table-wrap");
+      relatedTableTitle = title;
+      relatedTableRows = title ? rows : [];
       if (!title) {
         sectionTitle.hidden = true;
         wrapper.hidden = true;
+        refreshTableFilterFields();
+        applyTableFilters();
         return;
       }
       sectionTitle.textContent = title;
       sectionTitle.hidden = false;
       wrapper.hidden = false;
-      renderRows("related-table", rows, "La API no devolvió filas relacionadas.");
+      refreshTableFilterFields();
+      applyTableFilters();
+    }
+
+    function tableFilterValue(column, value) {
+      if (value === null || value === undefined) return "";
+      if (column === "role" && typeof value === "string" && value.toUpperCase() === "UTILITY") {
+        return "SUPPORT";
+      }
+      if (Array.isArray(value)) return value.join(" ");
+      if (typeof value === "object") return JSON.stringify(value);
+      return String(value);
+    }
+
+    function filterFieldLabel(field) {
+      const labels = {
+        match_id: "Partida (ID)",
+        provider_match_id: "Partida profesional (ID)",
+        riot_id: "Jugador (Riot ID)",
+        puuid: "Jugador (PUUID)",
+        player_handle: "Jugador",
+        role: "Rol",
+        champion: "Campeón",
+      };
+      return labels[field] || field.replaceAll("_", " ");
+    }
+
+    function refreshTableFilterFields() {
+      const selector = byId("table-filter-field");
+      const previous = selector.value;
+      const rows = [...primaryTableRows, ...relatedTableRows];
+      const fields = [...new Set(rows.flatMap(row => Object.keys(row)))].sort();
+      selector.replaceChildren(new Option("Todos los campos", ""));
+      fields.forEach(field => selector.add(new Option(filterFieldLabel(field), field)));
+      selector.value = fields.includes(previous) ? previous : "";
+      const hasRows = rows.length > 0;
+      selector.disabled = !hasRows;
+      byId("table-filter-value").disabled = !hasRows;
+      byId("clear-table-filter").disabled =
+        !hasRows || (!selector.value && !byId("table-filter-value").value);
+      refreshTableFilterSuggestions();
+    }
+
+    function refreshTableFilterSuggestions() {
+      const field = byId("table-filter-field").value;
+      const suggestions = byId("table-filter-suggestions");
+      suggestions.replaceChildren();
+      if (!field) return;
+      const values = [...primaryTableRows, ...relatedTableRows]
+        .map(row => tableFilterValue(field, row[field]))
+        .filter(value => value)
+        .filter((value, index, all) => all.indexOf(value) === index)
+        .slice(0, 100);
+      values.forEach(value => suggestions.appendChild(new Option(value)));
+    }
+
+    function rowsMatchingFilter(rows, field, query) {
+      if (!query) return rows;
+      return rows.filter(row => {
+        const values = field
+          ? [tableFilterValue(field, row[field])]
+          : Object.entries(row).map(([key, value]) => tableFilterValue(key, value));
+        return values.some(value => value.toLocaleLowerCase().includes(query));
+      });
+    }
+
+    function applyTableFilters() {
+      const field = byId("table-filter-field").value;
+      const query = byId("table-filter-value").value.trim().toLocaleLowerCase();
+      const primaryRows = rowsMatchingFilter(primaryTableRows, field, query);
+      const relatedRows = rowsMatchingFilter(relatedTableRows, field, query);
+      renderRows("data-table", primaryRows, "No hay filas que coincidan con el filtro.");
+      if (relatedTableTitle) {
+        renderRows("related-table", relatedRows, "No hay filas relacionadas que coincidan con el filtro.");
+      }
+      const total = primaryTableRows.length + relatedTableRows.length;
+      const visible = primaryRows.length + relatedRows.length;
+      byId("table-filter-count").textContent = total
+        ? `Filas visibles: ${visible} de ${total} cargadas.`
+        : "Carga una fuente para filtrar sus filas.";
+      byId("clear-table-filter").disabled = !total || (!field && !query);
     }
 
     function tableError(message) {
@@ -480,6 +584,17 @@
     byId("riot-page-size").addEventListener("change", event => {
       riotPageSize = Number(event.currentTarget.value);
       loadRiotPage(0);
+    });
+    byId("table-filter-field").addEventListener("change", () => {
+      refreshTableFilterSuggestions();
+      applyTableFilters();
+    });
+    byId("table-filter-value").addEventListener("input", applyTableFilters);
+    byId("clear-table-filter").addEventListener("click", () => {
+      byId("table-filter-field").value = "";
+      byId("table-filter-value").value = "";
+      refreshTableFilterSuggestions();
+      applyTableFilters();
     });
 
     async function loadHistory() {
