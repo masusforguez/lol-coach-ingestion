@@ -54,7 +54,7 @@
     .pagination { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 12px; }
     .pagination[hidden] { display: none; }
     .pagination label { min-width: 100px; }
-    .table-filters { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(180px, 1fr) auto; gap: 8px; align-items: end; margin-top: 14px; }
+    .table-filters { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(120px, .7fr) minmax(180px, 1fr) auto; gap: 8px; align-items: end; margin-top: 14px; }
     .row { display: flex; align-items: end; gap: 8px; }
     .row label { flex: 1; }
     .hint { margin: 10px 0 0; font-size: 12px; }
@@ -194,6 +194,12 @@
             <label>Filtrar por campo
               <select id="table-filter-field" disabled>
                 <option value="">Todos los campos</option>
+              </select>
+            </label>
+            <label>Coincidencia
+              <select id="table-filter-mode" disabled>
+                <option value="exact" selected>Exacta</option>
+                <option value="contains">Contiene</option>
               </select>
             </label>
             <label>Valor
@@ -352,6 +358,7 @@
       selector.value = fields.includes(previous) ? previous : "";
       const hasRows = rows.length > 0;
       selector.disabled = !hasRows;
+      byId("table-filter-mode").disabled = !hasRows;
       byId("table-filter-value").disabled = !hasRows;
       byId("clear-table-filter").disabled =
         !hasRows || (!selector.value && !byId("table-filter-value").value);
@@ -371,21 +378,25 @@
       values.forEach(value => suggestions.appendChild(new Option(value)));
     }
 
-    function rowsMatchingFilter(rows, field, query) {
+    function rowsMatchingFilter(rows, field, query, mode) {
       if (!query) return rows;
       return rows.filter(row => {
         const values = field
           ? [tableFilterValue(field, row[field])]
           : Object.entries(row).map(([key, value]) => tableFilterValue(key, value));
-        return values.some(value => value.toLocaleLowerCase().includes(query));
+        return values.some(value => {
+          const candidate = value.toLocaleLowerCase();
+          return mode === "exact" ? candidate === query : candidate.includes(query);
+        });
       });
     }
 
     function applyTableFilters() {
       const field = byId("table-filter-field").value;
       const query = byId("table-filter-value").value.trim().toLocaleLowerCase();
-      const primaryRows = rowsMatchingFilter(primaryTableRows, field, query);
-      const relatedRows = rowsMatchingFilter(relatedTableRows, field, query);
+      const mode = byId("table-filter-mode").value;
+      const primaryRows = rowsMatchingFilter(primaryTableRows, field, query, mode);
+      const relatedRows = rowsMatchingFilter(relatedTableRows, field, query, mode);
       renderRows("data-table", primaryRows, "No hay filas que coincidan con el filtro.");
       if (relatedTableTitle) {
         renderRows("related-table", relatedRows, "No hay filas relacionadas que coincidan con el filtro.");
@@ -589,6 +600,7 @@
       refreshTableFilterSuggestions();
       applyTableFilters();
     });
+    byId("table-filter-mode").addEventListener("change", applyTableFilters);
     byId("table-filter-value").addEventListener("input", applyTableFilters);
     byId("clear-table-filter").addEventListener("click", () => {
       byId("table-filter-field").value = "";

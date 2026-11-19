@@ -30,7 +30,9 @@ def test_dashboard_is_served_when_enabled():
     assert 'value.toUpperCase() === "UTILITY"' in response.text
     assert 'cell.textContent = "SUPPORT"' in response.text
     assert 'id="table-filter-field"' in response.text
+    assert 'id="table-filter-mode"' in response.text
     assert 'id="table-filter-value"' in response.text
+    assert 'byId("table-filter-mode").addEventListener("change", applyTableFilters)' in response.text
     assert 'id="riot-page-info"' in response.text
     assert 'id="riot-last"' in response.text
     assert 'data-table="riot"' in response.text
