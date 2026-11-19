@@ -30,6 +30,28 @@ def test_rerun_is_idempotent_no_new_rows(api, dirs):
     assert count_rows(dirs["lake"], "riot", "matches") == before
 
 
+def test_incremental_does_not_redownload_everything(api, dirs, monkeypatch):
+    """No basta con que las filas no se dupliquen: la segunda pasada no debe
+    volver a pedir todo. dlt filtraría por su cuenta y el resultado sería
+    correcto con el doble de tráfico, que es justo lo que el cursor evita."""
+    from ingestion import clients
+
+    run_direct(ep(api), dirs["lake"], dirs["state"], sources=("riot",), with_timelines=False)
+
+    seen = []
+    original = clients.riot_matches_pages
+
+    def spy(base_url, token, updated_after, page_size=50, match_id_after=None):
+        seen.append(updated_after)
+        return original(base_url, token, updated_after, page_size, match_id_after)
+
+    monkeypatch.setattr(clients, "riot_matches_pages", spy)
+    run_direct(ep(api), dirs["lake"], dirs["state"], sources=("riot",), with_timelines=False)
+
+    assert seen, "la segunda pasada no pidió nada"
+    assert all(u > 0 for u in seen), f"se pidió desde cero: {seen}"
+
+
 def test_incremental_loads_only_new_and_revised(api, dirs):
     from synthetic_api import generator as g
     total = api.settings.total_matches

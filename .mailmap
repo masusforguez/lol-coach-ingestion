@@ -1,0 +1,5 @@
+# Un solo autor con un solo nombre. Sin este archivo, git shortlog (y el
+# gráfico de contributors de GitHub) cuenta MarioF y masusforguez como dos
+# personas distintas porque el mismo email aparece con dos nombres.
+MarioF <masusforguez@gmail.com> masusforguez <masusforguez@gmail.com>
+MarioF <masusforguez@gmail.com>
