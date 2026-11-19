@@ -15,12 +15,17 @@ from __future__ import annotations
 import math
 import os
 import random
+import subprocess
+import sys
 import time
+from collections import deque
 from dataclasses import dataclass, field
+from ipaddress import ip_address
+from pathlib import Path
 from typing import Callable
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from . import generator as g
 
@@ -40,6 +45,7 @@ class Settings:
     start_matches: int = int(os.getenv("START_MATCHES", "400"))    # partidas ya disponibles al arrancar
     provider_credits: int = int(os.getenv("PROVIDER_CREDITS", "200"))
     video_daily_quota: int = int(os.getenv("VIDEO_DAILY_QUOTA", "500"))
+    dev_dashboard_enabled: bool = os.getenv("ENABLE_DEV_DASHBOARD", "").lower() in {"1", "true", "yes"}
     clock: Callable[[], float] = time.monotonic                    # inyectable en tests
 
 
@@ -84,6 +90,94 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     st = State(s)
     app = FastAPI(title="LoL coach - APIs sintéticas", version="1.0")
     app.state.settings, app.state.st = s, st
+
+    if s.dev_dashboard_enabled:
+        request_history = deque(maxlen=100)
+        app.state.request_history = request_history
+
+        def require_local_request(request: Request):
+            host = request.client.host if request.client else ""
+            try:
+                is_loopback = ip_address(host).is_loopback
+            except ValueError:
+                is_loopback = False
+            if not is_loopback:
+                raise HTTPException(403, detail="dev dashboard is available from this machine only")
+
+        def record_request(method: str, path: str, status_code: int, duration_ms: float):
+            request_history.append({
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "method": method,
+                "path": path,
+                "status_code": status_code,
+                "duration_ms": round(duration_ms, 2),
+            })
+
+        @app.middleware("http")
+        async def capture_api_requests(request: Request, call_next):
+            if request.url.path == "/dev" or request.url.path.startswith("/dev/"):
+                return await call_next(request)
+            started = time.perf_counter()
+            try:
+                response = await call_next(request)
+            except Exception:
+                record_request(request.method, request.url.path, 500,
+                               (time.perf_counter() - started) * 1000)
+                raise
+            record_request(request.method, request.url.path, response.status_code,
+                           (time.perf_counter() - started) * 1000)
+            return response
+
+        dashboard_path = Path(__file__).with_name("dashboard.html")
+        dashboard_html = dashboard_path.read_text(encoding="utf-8")
+
+        @app.get("/dev", response_class=HTMLResponse, include_in_schema=False)
+        def dev_dashboard(request: Request):
+            require_local_request(request)
+            return HTMLResponse(dashboard_html)
+
+        @app.get("/dev/api-requests", include_in_schema=False)
+        def recent_api_requests(request: Request):
+            require_local_request(request)
+            return list(reversed(request_history))
+
+        @app.post("/dev/api-requests/clear", include_in_schema=False)
+        def clear_api_requests(request: Request):
+            require_local_request(request)
+            request_history.clear()
+            return {"status": "cleared"}
+
+        @app.post("/dev/run-tests", include_in_schema=False)
+        def run_tests(request: Request):
+            require_local_request(request)
+            command = [sys.executable, "-m", "pytest", "tests", "-q"]
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=Path(__file__).resolve().parent.parent,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=300,
+                    check=False,
+                )
+            except FileNotFoundError as e:
+                raise HTTPException(503, detail="pytest is not installed; install requirements.txt first") from e
+            except subprocess.TimeoutExpired as e:
+                output = e.stdout or ""
+                if isinstance(output, bytes):
+                    output = output.decode(errors="replace")
+                return JSONResponse(
+                    {"command": "python -m pytest tests -q", "exit_code": None,
+                     "timed_out": True, "output": output},
+                    status_code=504,
+                )
+            return {
+                "command": "python -m pytest tests -q",
+                "exit_code": result.returncode,
+                "passed": result.returncode == 0,
+                "output": result.stdout,
+            }
 
     # ------------------------------------------------------------- utilidades
     def visible_match_indexes() -> list[int]:

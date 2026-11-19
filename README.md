@@ -23,11 +23,11 @@ Los datos son inventados (generados con Faker): no vienen de Riot ni de ninguna 
 ## Estructura
 
 ```
-synthetic_api/   generator.py (datos deterministas) · main.py (FastAPI con límites)
+synthetic_api/   generator.py · main.py (FastAPI con límites) · dashboard.html (panel local)
 ingestion/       clients.py · transform.py · sources.py (dlt) · pipeline.py
                  bus.py · producer.py · consumer.py (Kafka) · warehouse.py (DuckDB) · run.py (CLI)
 consume_kafka_retry.py  consumidor Kafka con grupo persistente y lago reutilizable
-tests/           41 pruebas (40 automáticas + 1 que requiere un broker Kafka real)
+tests/           pruebas de API, ingesta, almacén y Kafka (una requiere un broker real)
 .dlt/            config.toml (se sube) · secrets.toml (local, ignorado por Git)
 render.yaml · docker-compose.yml · requirements*.txt
 ```
@@ -36,7 +36,7 @@ render.yaml · docker-compose.yml · requirements*.txt
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests -q                       # 40 passed, 1 skipped
+python -m pytest tests -q                       # la integración Kafka se omite si no hay broker
 
 # 1) API sintética en local
 uvicorn synthetic_api.main:app --port 8000
@@ -50,6 +50,17 @@ python -m ingestion.run direct --max-timelines 20     # solo baja lo nuevo y lo 
 python -m ingestion.run pipeline --max-timelines 20   # bus en memoria, sin Docker
 python -m ingestion.run report                        # benchmarks y comparación de un jugador
 ```
+
+### Panel visual local
+
+En PowerShell, habilita el panel antes de arrancar la API:
+
+```powershell
+$env:ENABLE_DEV_DASHBOARD = "1"
+uvicorn synthetic_api.main:app --host 127.0.0.1 --port 8000
+```
+
+Abre `http://127.0.0.1:8000/dev`. Desde ahí puedes lanzar llamadas de prueba y ver sus respuestas e historial, avanzar o reiniciar el reloj simulado y ejecutar `pytest`. El historial se guarda solo en memoria y no registra query strings ni credenciales. El panel requiere una conexión local y está desactivado por defecto; no habilites `ENABLE_DEV_DASHBOARD` en Render.
 
 **Con Kafka real (PowerShell):**
 
