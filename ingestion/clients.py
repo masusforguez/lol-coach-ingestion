@@ -34,12 +34,16 @@ def _get(url: str, **kw):
 
 
 # ------------------------------------------------------------------ Riot
-def riot_matches_pages(base_url: str, token: str, updated_after: int, page_size: int = 50) -> Iterator[list]:
-    """Pagina por offset. offset += len(página) (más robusto que fiarse del total)."""
+def riot_matches_pages(base_url: str, token: str, updated_after: int, page_size: int = 50,
+                      match_id_after: str | None = None) -> Iterator[list]:
+    """Pagina por offset, con cursor compuesto para reanudar entre marcas empatadas."""
     offset = 0
     while True:
+        params = {"updated_after": updated_after, "limit": page_size, "offset": offset}
+        if match_id_after is not None:
+            params["match_id_after"] = match_id_after
         r = _get(f"{base_url}/riot/matches", headers={"X-Riot-Token": token},
-                 params={"updated_after": updated_after, "limit": page_size, "offset": offset})
+                 params=params)
         items = r.json()["items"]
         if not items:
             return

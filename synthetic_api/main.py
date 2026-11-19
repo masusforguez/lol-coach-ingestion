@@ -127,12 +127,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         st.maybe_fail()
 
     @app.get("/riot/matches", dependencies=[Depends(riot_guard)])
-    def riot_matches(updated_after: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
-                     offset: int = Query(0, ge=0)):
-        rows = sorted(((g.updated_at(i, st.sim_now_ms), i) for i in visible_match_indexes()
-                       if g.updated_at(i, st.sim_now_ms) > updated_after))
+    def riot_matches(updated_after: int = Query(0, ge=0), match_id_after: str | None = None,
+                     limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)):
+        rows = sorted((g.updated_at(i, st.sim_now_ms), g.match_id(i), i)
+                      for i in visible_match_indexes()
+                      if (g.updated_at(i, st.sim_now_ms) > updated_after
+                          or (g.updated_at(i, st.sim_now_ms) == updated_after
+                              and match_id_after is not None
+                              and g.match_id(i) > match_id_after)))
         page = rows[offset: offset + limit]
-        return {"total": len(rows), "items": [g.generate_match(i, st.sim_now_ms) for _, i in page]}
+        return {"total": len(rows), "items": [g.generate_match(i, st.sim_now_ms) for _, _, i in page]}
 
     @app.get("/riot/matches/{mid}/timeline", dependencies=[Depends(riot_guard)])
     def riot_timeline(mid: str):

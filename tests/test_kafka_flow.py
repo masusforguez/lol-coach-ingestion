@@ -143,6 +143,46 @@ def test_fetcher_state_survives_restart_and_does_not_refetch(api, env):
     assert len(bus.topics[TOPIC_MATCHES]) == published       # no vuelve a pedir lo ya publicado
 
 
+def test_fetcher_resumes_after_tied_timestamp_page(make_api, tmp_path, monkeypatch):
+    from synthetic_api import generator
+
+    tied_api = make_api(total_matches=4, start_matches=4)
+    tied_timestamp = generator.BASE_TIME_MS + 10_000_000
+    original_generate = generator.generate_match
+
+    monkeypatch.setattr(generator, "updated_at", lambda i, now_ms: tied_timestamp)
+
+    def generate_with_tied_timestamp(i, now_ms):
+        match = original_generate(i, now_ms)
+        match["updated_at"] = tied_timestamp
+        return match
+
+    monkeypatch.setattr(generator, "generate_match", generate_with_tied_timestamp)
+    bus = InMemoryBus()
+    state_path = tmp_path / "tied-fetcher.json"
+    fetcher = Fetcher(Endpoints(base_url=tied_api.url), bus, state_path, page_size=2)
+    original_publish = bus.publish
+    publishes = {"count": 0}
+
+    def fail_after_first_page(topic, key, value):
+        publishes["count"] += 1
+        if publishes["count"] == 3:
+            raise RuntimeError("interrupción después de guardar la primera página")
+        original_publish(topic, key, value)
+
+    monkeypatch.setattr(bus, "publish", fail_after_first_page)
+    with pytest.raises(RuntimeError, match="interrupción"):
+        fetcher.fetch_matches()
+
+    monkeypatch.setattr(bus, "publish", original_publish)
+    restarted = Fetcher(Endpoints(base_url=tied_api.url), bus, state_path, page_size=2)
+    restarted.fetch_matches()
+
+    ids = [message[0] for message in bus.topics[TOPIC_MATCHES]]
+    assert len(ids) == tied_api.state()["visible_matches"]
+    assert len(set(ids)) == len(ids)
+
+
 def test_producer_survives_rate_limit(make_api, env):
     api = make_api(rate_limit=6, rate_window_s=2.0)
     bus, f, c = build(api, env, page_size=20, max_timelines=0)

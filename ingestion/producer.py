@@ -30,7 +30,7 @@ class Fetcher:
                  max_timelines: int | None = None):
         self.ep, self.bus, self.page_size, self.max_timelines = ep, bus, page_size, max_timelines
         self.path = Path(state_path)
-        self.state = {"matches": 0, "pro": 0, "video": 0, "pending_timelines": []}
+        self.state = {"matches": 0, "matches_id": "", "pro": 0, "video": 0, "pending_timelines": []}
         if self.path.exists():
             self.state.update(json.loads(self.path.read_text()))
 
@@ -43,14 +43,17 @@ class Fetcher:
         n = 0
         try:
             for page in clients.riot_matches_pages(self.ep.base_url, self.ep.riot_token,
-                                                   self.state["matches"], self.page_size):
+                                                   self.state["matches"], self.page_size,
+                                                   self.state["matches_id"]):
                 for m in page:
                     self.bus.publish(TOPIC_MATCHES, m["match_id"], m)
                     if m["match_id"] not in self.state["pending_timelines"]:
                         self.state["pending_timelines"].append(m["match_id"])
                     n += 1
                 self.bus.flush()
-                self.state["matches"] = max(self.state["matches"], max(m["updated_at"] for m in page))
+                last = page[-1]
+                self.state["matches"] = last["updated_at"]
+                self.state["matches_id"] = last["match_id"]
                 self._save()          # el cursor avanza solo tras publicar la página
         except QuotaExhausted as e:
             log.warning("riot: %s", e)

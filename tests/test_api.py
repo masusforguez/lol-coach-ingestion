@@ -48,6 +48,34 @@ def test_advancing_clock_releases_new_and_revised_matches():
     assert n1 > n0
 
 
+def test_match_cursor_breaks_updated_at_ties(monkeypatch):
+    from synthetic_api import generator
+
+    c = client(total_matches=4, start_matches=4)
+    timestamp = generator.BASE_TIME_MS + 10_000_000
+    original_generate = generator.generate_match
+
+    monkeypatch.setattr(generator, "updated_at", lambda i, now_ms: timestamp)
+
+    def generate_with_tied_timestamp(i, now_ms):
+        match = original_generate(i, now_ms)
+        match["updated_at"] = timestamp
+        return match
+
+    monkeypatch.setattr(generator, "generate_match", generate_with_tied_timestamp)
+    first = c.get("/riot/matches", params={"limit": 2}, headers=RIOT).json()["items"]
+    next_page = c.get("/riot/matches", params={
+        "updated_after": timestamp,
+        "match_id_after": first[-1]["match_id"],
+        "limit": 2,
+    }, headers=RIOT).json()["items"]
+
+    assert [m["match_id"] for m in first + next_page] == sorted(
+        m["match_id"] for m in first + next_page
+    )
+    assert len({m["match_id"] for m in first + next_page}) == 4
+
+
 def test_timeline_and_unknown_match():
     c = client()
     first = c.get("/riot/matches", params={"limit": 1}, headers=RIOT).json()["items"][0]

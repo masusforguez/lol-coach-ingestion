@@ -64,6 +64,8 @@ El consumidor reutiliza siempre `data/lake_kafka` y `data/state_kafka`; el grupo
 
 **En Render:** subir el repositorio a GitHub y en Render elegir *New > Blueprint* apuntando a `render.yaml`. Copia las claves que genera el panel al archivo local `.dlt/secrets.toml` (no se sube a GitHub) y configura la URL en `.dlt/config.toml` o en `SOURCES__API__BASE_URL`.
 
+**Credenciales:** no hacen falta para ejecutar las pruebas ni la API sintética local; esta usa las claves de desarrollo (`dev-riot-key`, `dev-provider-key` y `dev-video-key`). Para usar la API desplegada en Render sí necesitas sus claves generadas. Si ejecutas la API local, apunta también la ingesta a `http://127.0.0.1:8000` (por ejemplo, con `SOURCES__API__BASE_URL`) en vez de la URL desplegada que viene en `.dlt/config.toml`.
+
 ## Cómo se construyó (incremental, un paso por test)
 
 | Paso | Qué se añadió | Tests (el contrato) |
@@ -77,7 +79,7 @@ El consumidor reutiliza siempre `data/lake_kafka` y `data/state_kafka`; el grupo
 ## Decisiones de diseño
 
 - **EL antes que T.** Se carga el dato en bruto y la transformación (dedupe, métricas) se hace después en DuckDB.
-- **Cursor `updated_at`, no `game_creation`.** Así se capturan también las partidas que la fuente revisa más tarde (el test lo comprueba con un oráculo independiente).
+- **Cursor `(updated_at, match_id)`, no `game_creation`.** El ID desempata marcas iguales al reanudar una página y `updated_at` también captura partidas revisadas más tarde.
 - **El lago conserva el histórico y DuckDB deduplica.** Comprobado: con destino Parquet en disco, dlt degrada `merge` a `append` (lo avisa en el log). Por eso las vistas `silver_*` se quedan con la última versión de cada clave primaria.
 - **Kafka resuelve la sincronización.** El productor respeta los límites de cada API; el consumidor confirma el offset solo si dlt cargó el lote. Si falla, se reentrega (al menos una vez) y los duplicados se absorben por clave primaria.
 - **Timelines con presupuesto.** Cuestan una petición por partida y van más lentos que las partidas; lo pendiente se conserva y se completa en la siguiente pasada.
