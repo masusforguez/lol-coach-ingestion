@@ -37,7 +37,7 @@
     .card { min-width: 0; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--panel) 95%, transparent); padding: 18px; box-shadow: 0 12px 32px #0002; }
     .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
-    input {
+    input, select {
       width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px;
       background: #0c1425; color: var(--text); padding: 9px 10px; font: inherit;
     }
@@ -46,6 +46,7 @@
       padding: 9px 11px; font: inherit; cursor: pointer; transition: background .15s, border-color .15s;
     }
     button:hover { background: #243d64; border-color: var(--blue); }
+    button:disabled { cursor: not-allowed; opacity: .5; }
     button.primary { background: #2456a0; border-color: #3e76c9; }
     button.warn { border-color: #7a3d4a; background: #3b202c; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -85,7 +86,7 @@
     <header>
       <div>
         <h1>LoL Coach · Consola de pruebas</h1>
-        <p class="subtitle">Panel de desarrollo para la API sintética. Las llamadas y el historial se quedan en memoria.</p>
+        <p class="subtitle">Prueba la API local o reenvía consultas a la API configurada en dlt.</p>
       </div>
       <span class="badge">Solo localhost</span>
     </header>
@@ -93,14 +94,24 @@
     <div class="layout">
       <div class="stack">
         <section class="card">
-          <h2>Credenciales locales</h2>
-          <div class="fields">
-            <label>Token Riot<input id="riot-token" value="dev-riot-key" autocomplete="off"></label>
-            <label>Token admin<input id="admin-token" value="dev-admin" autocomplete="off"></label>
-            <label>Token provider<input id="provider-token" value="dev-provider-key" autocomplete="off"></label>
-            <label>Clave de vídeo<input id="video-key" value="dev-video-key" autocomplete="off"></label>
+          <h2>Destino de las solicitudes</h2>
+          <label>API a probar
+            <select id="target">
+              <option value="local">Local (claves de desarrollo)</option>
+              <option value="render">Remota (URL de .dlt/config.toml)</option>
+            </select>
+          </label>
+          <p class="hint" id="target-hint">Las llamadas van a esta API local.</p>
+          <div id="local-credentials">
+            <h2 style="margin-top:16px">Credenciales locales</h2>
+            <div class="fields">
+              <label>Token Riot<input id="riot-token" value="dev-riot-key" autocomplete="off"></label>
+              <label>Token admin<input id="admin-token" value="dev-admin" autocomplete="off"></label>
+              <label>Token provider<input id="provider-token" value="dev-provider-key" autocomplete="off"></label>
+              <label>Clave de vídeo<input id="video-key" value="dev-video-key" autocomplete="off"></label>
+            </div>
+            <p class="hint">No se guardan en el navegador. Los valores iniciales sirven para la API local.</p>
           </div>
-          <p class="hint">No se guardan en el navegador. Los valores iniciales sirven para la API local.</p>
         </section>
 
         <section class="card">
@@ -122,10 +133,10 @@
           <h2>Reloj simulado</h2>
           <div class="row">
             <label>Avanzar minutos<input id="minutes" type="number" min="1" max="10080" value="60"></label>
-            <button class="primary" data-request="advance">Avanzar</button>
-            <button class="warn" data-request="reset">Reiniciar</button>
+            <button class="primary" id="advance" data-request="advance">Avanzar</button>
+            <button class="warn" id="reset" data-request="reset">Reiniciar</button>
           </div>
-          <p class="hint">El reinicio solo afecta al estado en memoria de esta API local.</p>
+          <p class="hint" id="clock-hint">El reloj remoto es de solo lectura; estos controles solo afectan a la API local.</p>
         </section>
 
         <section class="card">
@@ -166,6 +177,10 @@
     const responseStatus = byId("response-status");
     const responseBody = byId("response-body");
 
+    function isRemote() {
+      return byId("target").value === "render";
+    }
+
     function showResult(label, status, body, elapsed) {
       responseStatus.textContent = `${label} · HTTP ${status} · ${elapsed.toFixed(0)} ms`;
       responseStatus.className = `status ${status >= 200 && status < 300 ? "ok" : "bad"}`;
@@ -174,16 +189,27 @@
 
     async function request(label, path, options = {}) {
       const started = performance.now();
+      const target = isRemote() ? "Render" : "Local";
+      if (isRemote() && options.method && options.method !== "GET") {
+        showResult(label, 0, "El destino remoto solo permite consultas de lectura.", 0);
+        return null;
+      }
+      const requestPath = isRemote() ? `/dev/remote${path}` : path;
+      const requestOptions = isRemote() ? {} : options;
+      responseStatus.textContent = `${target} · ${options.method || "GET"} ${label} · Esperando respuesta…`;
+      responseStatus.className = "status muted";
+      responseBody.textContent = "Esperando respuesta…";
       let payload = null;
       try {
-        const response = await fetch(path, options);
+        const response = await fetch(requestPath, requestOptions);
         const raw = await response.text();
         let body = raw;
         try { body = JSON.parse(raw); } catch {}
         payload = body;
-        showResult(`${options.method || "GET"} ${label}`, response.status, body, performance.now() - started);
+        showResult(`${isRemote() ? "Render" : "Local"} · ${options.method || "GET"} ${label}`,
+          response.status, body, performance.now() - started);
       } catch (error) {
-        showResult(label, 0, String(error), performance.now() - started);
+        showResult(`${target} · ${label}`, 0, String(error), performance.now() - started);
       }
       await loadHistory();
       return payload;
@@ -259,7 +285,8 @@
           });
         }
         if (action === "videos") {
-          const query = new URLSearchParams({ key: byId("video-key").value, maxResults: "5" });
+          const query = new URLSearchParams({ maxResults: "5" });
+          if (!isRemote()) query.set("key", byId("video-key").value);
           return request("/youtube/videos", `/youtube/videos?${query}`);
         }
         if (action === "advance") {
@@ -277,6 +304,35 @@
         }
       });
     });
+
+    async function updateTarget() {
+      const remote = isRemote();
+      byId("local-credentials").hidden = remote;
+      byId("advance").disabled = remote;
+      byId("reset").disabled = remote;
+      byId("clock-hint").textContent = remote
+        ? "En Render el reloj no se modifica desde este panel."
+        : "Estos controles solo afectan al estado en memoria de la API local.";
+      if (remote) {
+        responseStatus.textContent = "Render · Leyendo configuración…";
+        responseStatus.className = "status muted";
+        responseBody.textContent = "Leyendo .dlt/config.toml…";
+        try {
+          const response = await fetch("/dev/remote-info");
+          const info = await response.json();
+          if (!response.ok) throw new Error(info.detail || `HTTP ${response.status}`);
+          byId("target-hint").textContent =
+            `Consultas de solo lectura a ${info.base_url}. Las claves se leen en el servidor local y no se envían al navegador.`;
+        } catch (error) {
+          byId("target-hint").textContent = `No se pudo leer la configuración remota: ${error}`;
+        }
+      } else {
+        byId("target-hint").textContent = "Las llamadas van a esta API local.";
+      }
+      return request("/health", "/health");
+    }
+
+    byId("target").addEventListener("change", updateTarget);
 
     byId("clear-history").addEventListener("click", async () => {
       try {

@@ -51,7 +51,7 @@ python -m ingestion.run pipeline --max-timelines 20   # bus en memoria, sin Dock
 python -m ingestion.run report                        # benchmarks y comparación de un jugador
 ```
 
-### Panel visual local
+### Panel visual local y consultas a Render
 
 En PowerShell, habilita el panel antes de arrancar la API:
 
@@ -60,7 +60,9 @@ $env:ENABLE_DEV_DASHBOARD = "1"
 uvicorn synthetic_api.main:app --host 127.0.0.1 --port 8000
 ```
 
-Abre `http://127.0.0.1:8000/dev`. Desde ahí puedes lanzar llamadas de prueba y ver sus respuestas e historial, avanzar o reiniciar el reloj simulado y ejecutar `pytest`. El historial se guarda solo en memoria y no registra query strings ni credenciales. El panel requiere una conexión local y está desactivado por defecto; no habilites `ENABLE_DEV_DASHBOARD` en Render.
+Abre `http://127.0.0.1:8000/dev`. El selector permite probar la API local o consultar la URL de `.dlt/config.toml` (Render). Para Render, el proceso local lee `sources.api.riot_token`, `sources.api.provider_token` y `sources.api.video_key` de `.dlt/secrets.toml` o del entorno y reenvía solo las rutas de lectura permitidas. Las claves no se envían al navegador ni se guardan en el historial. El botón de estado remoto requiere además `sources.api.admin_token`; avanzar o reiniciar el reloj de Render no está permitido desde el panel.
+
+El panel también muestra las respuestas y el historial, permite avanzar o reiniciar el reloj de la API local y ejecutar `pytest`. El historial se guarda solo en memoria y no registra query strings ni credenciales. El panel requiere una conexión local y está desactivado por defecto; no habilites `ENABLE_DEV_DASHBOARD` en Render.
 
 **Con Kafka real (PowerShell):**
 

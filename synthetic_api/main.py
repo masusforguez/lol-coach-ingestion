@@ -12,9 +12,11 @@ la carga incremental.
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -23,6 +25,9 @@ from dataclasses import dataclass, field
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Callable
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode, urlsplit
+from urllib.request import Request as URLRequest, urlopen
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -140,6 +145,110 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def recent_api_requests(request: Request):
             require_local_request(request)
             return list(reversed(request_history))
+
+        def dlt_module():
+            try:
+                import dlt
+            except ImportError as e:
+                raise HTTPException(503, detail="Install requirements.txt to use the Render dashboard target") from e
+            return dlt
+
+        def configured_remote_base_url() -> str:
+            dlt = dlt_module()
+            base_url = dlt.config.get("sources.api.base_url")
+            if not isinstance(base_url, str) or not base_url:
+                raise HTTPException(503, detail="Set sources.api.base_url in .dlt/config.toml")
+            parsed = urlsplit(base_url)
+            is_loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+            if (not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment
+                    or (parsed.scheme != "https" and not (parsed.scheme == "http" and is_loopback))):
+                raise HTTPException(503, detail="The configured API URL must use HTTPS")
+            return base_url.rstrip("/")
+
+        def proxy_remote_request(remote_path: str, request: Request):
+            dlt = dlt_module()
+            secret_name = None
+            query_names: set[str] = set()
+            headers = {"Accept": "application/json"}
+
+            if remote_path == "health":
+                pass
+            elif remote_path == "admin/state":
+                secret_name = "sources.api.admin_token"
+                headers["X-Admin-Token"] = ""
+            elif remote_path == "riot/matches":
+                secret_name = "sources.api.riot_token"
+                headers["X-Riot-Token"] = ""
+                query_names = {"updated_after", "match_id_after", "limit", "offset"}
+            elif re.fullmatch(r"riot/matches/[A-Za-z0-9_-]+/timeline", remote_path):
+                secret_name = "sources.api.riot_token"
+                headers["X-Riot-Token"] = ""
+            elif remote_path == "provider/pro-matches":
+                secret_name = "sources.api.provider_token"
+                headers["Authorization"] = ""
+                query_names = {"since", "cursor", "page_size"}
+            elif remote_path == "youtube/videos":
+                secret_name = "sources.api.video_key"
+                query_names = {"publishedAfter", "pageToken", "maxResults"}
+            else:
+                raise HTTPException(404, detail="Remote dashboard endpoint is not allowed")
+
+            query_values = list(request.query_params.multi_items())
+            if any(name not in query_names for name, _ in query_values):
+                raise HTTPException(400, detail="Unsupported query parameter")
+            base_url = configured_remote_base_url()
+            if secret_name:
+                secret_value = dlt.secrets.get(secret_name)
+                if not isinstance(secret_value, str) or not secret_value:
+                    raise HTTPException(
+                        503,
+                        detail=f"Missing local secret {secret_name} in .dlt/secrets.toml or environment",
+                    )
+                if "X-Admin-Token" in headers:
+                    headers["X-Admin-Token"] = secret_value
+                elif "X-Riot-Token" in headers:
+                    headers["X-Riot-Token"] = secret_value
+                elif "Authorization" in headers:
+                    headers["Authorization"] = f"Bearer {secret_value}"
+                else:
+                    query_values.append(("key", secret_value))
+
+            upstream_url = f"{base_url}/{quote(remote_path, safe='/')}"
+            if query_values:
+                upstream_url = f"{upstream_url}?{urlencode(query_values)}"
+            upstream_request = URLRequest(upstream_url, headers=headers)
+            started = time.perf_counter()
+            try:
+                with urlopen(upstream_request, timeout=90) as upstream:
+                    status_code = upstream.status
+                    content = upstream.read()
+                    retry_after = upstream.headers.get("Retry-After")
+            except HTTPError as e:
+                status_code = e.code
+                content = e.read()
+                retry_after = e.headers.get("Retry-After") if e.headers else None
+            except (URLError, TimeoutError) as e:
+                record_request("GET", f"/{remote_path}", 502, (time.perf_counter() - started) * 1000)
+                raise HTTPException(502, detail="Could not reach the API configured in .dlt/config.toml") from e
+
+            try:
+                body = json.loads(content.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                record_request("GET", f"/{remote_path}", 502, (time.perf_counter() - started) * 1000)
+                raise HTTPException(502, detail="The configured API returned an invalid JSON response") from e
+            record_request("GET", f"/{remote_path}", status_code, (time.perf_counter() - started) * 1000)
+            response_headers = {"Retry-After": retry_after} if retry_after else None
+            return JSONResponse(body, status_code=status_code, headers=response_headers)
+
+        @app.get("/dev/remote-info", include_in_schema=False)
+        def remote_info(request: Request):
+            require_local_request(request)
+            return {"base_url": configured_remote_base_url()}
+
+        @app.get("/dev/remote/{remote_path:path}", include_in_schema=False)
+        def remote_request(remote_path: str, request: Request):
+            require_local_request(request)
+            return proxy_remote_request(remote_path, request)
 
         @app.post("/dev/api-requests/clear", include_in_schema=False)
         def clear_api_requests(request: Request):
