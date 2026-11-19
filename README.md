@@ -15,7 +15,9 @@ Los datos son inventados (generados con Faker): no vienen de Riot ni de ninguna 
  └────────────────────────────┘              (respeta límites)   (commit tras cargar)                              (benchmarks)
 ```
 
-Diagrama detallado: [arquitectura del proyecto](docs/project-architecture.html).
+![Arquitectura de ingesta y análisis: la API sintética alimenta dlt directo y el flujo Fetcher–bus–LakeConsumer; ambos escriben Parquet y DuckDB construye las vistas](docs/architecture.svg)
+
+*Diagrama editable en [`docs/architecture.svg`](docs/architecture.svg).*
 
 - **Riot (simulada):** partidas con 10 participantes (lista anidada) y su timeline minuto a minuto. Límite de peticiones por ventana, con revisiones posteriores de algunas partidas.
 - **Proveedor de pago (simulado):** partidas profesionales con paginación por cursor y créditos que se agotan.
@@ -30,6 +32,7 @@ ingestion/       clients.py · transform.py · sources.py (dlt) · pipeline.py
                  bus.py · producer.py · consumer.py (Kafka) · warehouse.py (DuckDB) · run.py (CLI)
 consume_kafka_retry.py  consumidor Kafka con grupo persistente y lago reutilizable
 tests/           pruebas de API, ingesta, almacén y Kafka (una requiere un broker real)
+docs/            architecture.svg (diagrama que se muestra arriba)
 .dlt/            config.toml (se sube) · secrets.toml (local, ignorado por Git)
 render.yaml · docker-compose.yml · requirements*.txt
 ```
