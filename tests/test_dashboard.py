@@ -25,6 +25,11 @@ def test_dashboard_is_served_when_enabled():
     assert response.status_code == 200
     assert "LoL Coach · Consola de pruebas" in response.text
     assert "URL de .dlt/config.toml" in response.text
+    assert "Datos de la API en tablas" in response.text
+    assert 'data-table="riot"' in response.text
+    assert 'data-table="provider"' in response.text
+    assert 'data-table="videos"' in response.text
+    assert 'data-table="timeline"' in response.text
 
 
 def test_dashboard_rejects_non_loopback_clients():

@@ -64,6 +64,8 @@
       white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, Consolas, monospace;
     }
     .history-wrap { overflow: auto; max-height: 340px; }
+    .data-table-wrap { overflow: auto; max-height: 320px; margin-top: 8px; border: 1px solid var(--line); border-radius: 9px; }
+    .data-table-wrap table { min-width: 640px; }
     table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
     th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; }
     th, td { padding: 8px 7px; border-bottom: 1px solid var(--line); }
@@ -158,6 +160,29 @@
 
         <section class="card">
           <div class="response-head">
+            <h2 style="margin:0">Datos de la API en tablas</h2>
+            <span id="table-target" class="muted">Sin cargar</span>
+          </div>
+          <p class="hint">Carga cada fuente cuando quieras; las respuestas se muestran en tablas legibles. Riot y profesional incluyen tablas de participantes y picks.</p>
+          <div class="actions">
+            <button data-table="riot">Cargar partidas Riot</button>
+            <button data-table="provider">Cargar partidas pro</button>
+            <button data-table="videos">Cargar vídeos</button>
+            <button data-table="timeline">Cargar timeline del ID indicado</button>
+          </div>
+          <h3 id="primary-table-title">Resultados</h3>
+          <div class="data-table-wrap">
+            <table><thead id="data-table-head"><tr><th>Sin datos</th></tr></thead><tbody id="data-table-body"><tr><td class="empty">Elige una fuente para cargar sus datos.</td></tr></tbody></table>
+          </div>
+          <h3 id="related-table-title" hidden></h3>
+          <div id="related-table-wrap" class="data-table-wrap" hidden>
+            <table><thead id="related-table-head"></thead><tbody id="related-table-body"></tbody></table>
+          </div>
+          <p class="hint" id="table-message">Las solicitudes son bajo demanda y usan el destino seleccionado arriba.</p>
+        </section>
+
+        <section class="card">
+          <div class="response-head">
             <h2 style="margin:0">Historial reciente</h2>
             <button id="clear-history">Limpiar</button>
           </div>
@@ -187,6 +212,74 @@
       responseBody.textContent = typeof body === "string" ? body : JSON.stringify(body, null, 2);
     }
 
+    function renderRows(prefix, rows, emptyMessage) {
+      const head = byId(`${prefix}-head`);
+      const body = byId(`${prefix}-body`);
+      head.replaceChildren();
+      body.replaceChildren();
+      if (!Array.isArray(rows) || rows.length === 0) {
+        const row = body.insertRow();
+        const cell = row.insertCell();
+        cell.colSpan = 1;
+        cell.className = "empty";
+        cell.textContent = emptyMessage;
+        return;
+      }
+
+      const columns = [...new Set(rows.flatMap(row => Object.keys(row)))];
+      const header = head.insertRow();
+      columns.forEach(column => {
+        const cell = document.createElement("th");
+        cell.textContent = column;
+        header.appendChild(cell);
+      });
+      rows.forEach(item => {
+        const row = body.insertRow();
+        columns.forEach(column => {
+          const value = item[column];
+          const cell = row.insertCell();
+          if (Array.isArray(value)) {
+            cell.textContent = `${value.length} elementos`;
+          } else if (value && typeof value === "object") {
+            cell.textContent = JSON.stringify(value);
+          } else if (value === null || value === undefined) {
+            cell.textContent = "—";
+          } else {
+            cell.textContent = value;
+          }
+        });
+      });
+    }
+
+    function renderPrimaryTable(title, rows) {
+      byId("primary-table-title").textContent = title;
+      renderRows("data-table", rows, "La API no devolvió filas para esta consulta.");
+    }
+
+    function renderRelatedTable(title, rows) {
+      const sectionTitle = byId("related-table-title");
+      const wrapper = byId("related-table-wrap");
+      if (!title) {
+        sectionTitle.hidden = true;
+        wrapper.hidden = true;
+        return;
+      }
+      sectionTitle.textContent = title;
+      sectionTitle.hidden = false;
+      wrapper.hidden = false;
+      renderRows("related-table", rows, "La API no devolvió filas relacionadas.");
+    }
+
+    function tableError(message) {
+      renderRelatedTable("", []);
+      renderPrimaryTable("Resultados", []);
+      byId("table-message").textContent = message;
+    }
+
+    function setTableTarget() {
+      byId("table-target").textContent = isRemote() ? "Destino: Render" : "Destino: API local";
+    }
+
     async function request(label, path, options = {}) {
       const started = performance.now();
       const target = isRemote() ? "Render" : "Local";
@@ -214,6 +307,114 @@
       await loadHistory();
       return payload;
     }
+
+    document.querySelectorAll("[data-table]").forEach(button => {
+      button.addEventListener("click", async () => {
+        const action = button.dataset.table;
+        const target = isRemote() ? "Render" : "API local";
+        byId("table-message").textContent = `Consultando ${target}…`;
+        setTableTarget();
+
+        if (action === "riot") {
+          const payload = await request("/riot/matches", "/riot/matches?limit=5", {
+            headers: { "X-Riot-Token": byId("riot-token").value },
+          });
+          if (!payload || !Array.isArray(payload.items)) return tableError("No se pudieron cargar las partidas Riot.");
+          const matches = payload.items;
+          renderPrimaryTable("Partidas Riot", matches.map(match => ({
+            match_id: match.match_id,
+            rank_tier: match.rank_tier,
+            patch: match.patch,
+            game_duration: match.game_duration,
+            winning_team: match.winning_team,
+            updated_at: match.updated_at,
+            data_revision: match.data_revision,
+          })));
+          const participants = matches.flatMap(match => (match.participants || []).map(participant => ({
+            match_id: match.match_id,
+            ...participant,
+          })));
+          renderRelatedTable("Participantes de las partidas cargadas", participants);
+          if (matches.length) byId("match-id").value = matches[0].match_id;
+          byId("table-message").textContent = `${matches.length} partidas y ${participants.length} participantes.`;
+          return;
+        }
+
+        if (action === "provider") {
+          const payload = await request("/provider/pro-matches", "/provider/pro-matches?page_size=5", {
+            headers: { Authorization: `Bearer ${byId("provider-token").value}` },
+          });
+          if (!payload || !Array.isArray(payload.items)) return tableError("No se pudieron cargar las partidas profesionales.");
+          const matches = payload.items;
+          renderPrimaryTable("Partidas profesionales", matches.map(match => ({
+            provider_match_id: match.provider_match_id,
+            league: match.league,
+            patch: match.patch,
+            played_at: match.played_at,
+            winner: match.winner,
+            game_length_s: match.game_length_s,
+          })));
+          const picks = matches.flatMap(match => (match.picks || []).map(pick => ({
+            provider_match_id: match.provider_match_id,
+            league: match.league,
+            ...pick,
+          })));
+          renderRelatedTable("Picks y jugadores", picks);
+          byId("table-message").textContent = `${matches.length} partidas profesionales y ${picks.length} picks.`;
+          return;
+        }
+
+        if (action === "videos") {
+          const query = new URLSearchParams({ maxResults: "5" });
+          if (!isRemote()) query.set("key", byId("video-key").value);
+          const payload = await request("/youtube/videos", `/youtube/videos?${query}`);
+          if (!payload || !Array.isArray(payload.items)) return tableError("No se pudieron cargar los vídeos.");
+          const videos = payload.items;
+          renderRelatedTable("", []);
+          renderPrimaryTable("Vídeos", videos.map(video => ({
+            video_id: video.video_id,
+            title: video.title,
+            channel: video.channel,
+            published_at: video.published_at,
+            champion: video.champion,
+            opponent: video.opponent,
+            role: video.role,
+            rank: video.rank,
+            patch: video.patch,
+            duration_s: video.duration_s,
+            riot_match_id: video.riot_match_id,
+          })));
+          byId("table-message").textContent = `${videos.length} vídeos.`;
+          return;
+        }
+
+        if (action === "timeline") {
+          const matchId = byId("match-id").value.trim();
+          if (!matchId) return tableError("Introduce o carga primero un ID de partida para consultar su timeline.");
+          const path = `/riot/matches/${encodeURIComponent(matchId)}/timeline`;
+          const payload = await request(path, path, {
+            headers: { "X-Riot-Token": byId("riot-token").value },
+          });
+          if (!payload || !Array.isArray(payload.events) || !Array.isArray(payload.frames)) {
+            return tableError("No se pudo cargar el timeline. Comprueba el ID de partida.");
+          }
+          renderPrimaryTable(`Eventos · ${matchId}`, payload.events.map(event => ({
+            event_id: event.event_id,
+            minute: event.minute,
+            type: event.type,
+            puuid: event.puuid,
+            detail: event.detail,
+          })));
+          const frameParticipants = payload.frames.flatMap(frame => (frame.participants || []).map(participant => ({
+            minute: frame.minute,
+            ...participant,
+          })));
+          renderRelatedTable("Evolución por minuto y participante", frameParticipants);
+          byId("table-message").textContent =
+            `${payload.events.length} eventos y ${frameParticipants.length} registros de evolución.`;
+        }
+      });
+    });
 
     async function loadHistory() {
       try {
@@ -329,6 +530,7 @@
       } else {
         byId("target-hint").textContent = "Las llamadas van a esta API local.";
       }
+      setTableTarget();
       return request("/health", "/health");
     }
 
@@ -367,6 +569,7 @@
     });
 
     loadHistory();
+    setTableTarget();
     request("/health", "/health");
     setInterval(loadHistory, 2500);
   </script>
