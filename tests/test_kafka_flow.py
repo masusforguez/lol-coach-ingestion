@@ -1,5 +1,5 @@
 """PASO 5 - Bus de mensajes: sincronización entre fuentes e ingesta.
-Con InMemoryBus (sin Docker). El mismo código funciona con KafkaBus."""
+Con InMemoryBus (sin broker). El mismo código funciona con KafkaBus."""
 import pytest
 
 from ingestion import warehouse as wh
@@ -188,3 +188,30 @@ def test_producer_survives_rate_limit(make_api, env):
     bus, f, c = build(api, env, page_size=20, max_timelines=0)
     f.run_once()
     assert len(bus.topics[TOPIC_MATCHES]) == api.state()["visible_matches"]
+
+
+def test_drain_waits_for_a_group_that_is_still_rebalancing(api, env, monkeypatch):
+    """Un grupo nuevo tarda en unirse: sus primeros poll() vuelven vacíos aunque
+    haya mensajes retenidos. drain() no debe darse por vacío a la primera."""
+    from ingestion import consumer as consumer_mod
+    from ingestion.producer import ALL_TOPICS
+
+    bus, f, c = build(api, env)
+    f.run_once()
+    original_poll = bus.poll
+    calls = {"n": 0}
+
+    def slow_join(topic, group, max_messages=500, timeout=1.0):
+        calls["n"] += 1
+        # La primera vuelta completa por los 4 topics devuelve vacío (rebalanceo).
+        if calls["n"] <= len(ALL_TOPICS):
+            return []
+        return original_poll(topic, group, max_messages=max_messages, timeout=timeout)
+
+    monkeypatch.setattr(bus, "poll", slow_join)
+    monkeypatch.setattr(consumer_mod.time, "sleep", lambda _s: None)
+
+    got = c.drain()
+    assert got[TOPIC_MATCHES] == api.state()["visible_matches"]   # no se pierde nada
+    con = silver_counts(env["lake"])
+    assert con.execute("select count(*) from silver_matches").fetchone()[0] == got[TOPIC_MATCHES]

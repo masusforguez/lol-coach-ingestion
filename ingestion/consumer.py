@@ -5,6 +5,8 @@ error. Si algo falla, no se confirma y el lote se vuelve a leer (al menos una ve
 """
 from __future__ import annotations
 
+import time
+
 import dlt
 
 from .bus import Message, MessageBus
@@ -78,12 +80,24 @@ class LakeConsumer:
             loaded[topic] = len(msgs)
         return loaded
 
-    def drain(self, max_messages: int = 500) -> dict[str, int]:
-        """Consume hasta vaciar los topics."""
+    def drain(self, max_messages: int = 500, empty_passes: int = 3, wait: float = 1.0) -> dict[str, int]:
+        """Consume hasta vaciar los topics.
+
+        Un grupo nuevo tarda en unirse al grupo (rebalanceo) y sus primeros
+        poll() devuelven vacío aunque haya mensajes retenidos. Por eso una pasada
+        vacía no basta para concluir que no queda nada: se toleran
+        `empty_passes` pasadas seguidas (cada una con su espera) antes de salir.
+        """
         total: dict[str, int] = {}
-        while True:
+        idle = 0
+        while idle < empty_passes:
             got = self.consume_once(max_messages)
             if not got:
-                return total
+                idle += 1
+                if idle < empty_passes:
+                    time.sleep(wait)
+                continue
+            idle = 0
             for k, v in got.items():
                 total[k] = total.get(k, 0) + v
+        return total

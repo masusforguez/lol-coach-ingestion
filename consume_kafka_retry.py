@@ -1,6 +1,13 @@
-"""Consumidor Kafka con reintentos y offsets persistentes entre ejecuciones."""
+"""Consumidor Kafka con offsets persistentes entre ejecuciones.
+
+Carga en el lago todo lo que haya retenido en los topics y confirma cada lote
+solo después de que dlt lo escriba. El grupo conserva sus offsets, así que las
+siguientes ejecuciones continúan donde se quedaron.
+
+Un grupo nuevo tarda en unirse (rebalanceo): sus primeros poll() vuelven vacíos
+aunque haya mensajes. LakeConsumer.drain() ya lo tiene en cuenta.
+"""
 import os
-import time
 
 from ingestion.bus import KafkaBus
 from ingestion.consumer import LakeConsumer
@@ -12,20 +19,12 @@ GROUP = os.getenv("KAFKA_CONSUMER_GROUP", "lake-loader-kafka")
 
 bus = KafkaBus(BOOT)
 consumer = LakeConsumer(bus, LAKE, STATE, group=GROUP)
-total: dict[str, int] = {}
 
 try:
-    for attempt in range(1, 11):
-        got = consumer.consume_once(max_messages=500)
-        if got:
-            print(f"Intento {attempt}: {got}", flush=True)
-            for topic, n in got.items():
-                total[topic] = total.get(topic, 0) + n
-        else:
-            print(f"Intento {attempt}: sin mensajes", flush=True)
-        if attempt < 10:
-            time.sleep(2)
+    total = consumer.drain(max_messages=500)
 finally:
     bus.close()
 
+for topic, n in total.items():
+    print(f"{topic}: {n}")
 print("TOTAL:", total)

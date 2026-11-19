@@ -8,8 +8,9 @@ Por qué un bus entre las APIs y el lago (el problema de sincronización):
     Si falla antes, los mensajes se vuelven a entregar -> semántica "al menos una vez".
     Los posibles duplicados se eliminan después por clave primaria (idempotencia).
 
-InMemoryBus permite desarrollar y testear sin Docker. KafkaBus usa confluent-kafka
-(el cliente de Kafka que también usa el origen verificado de dlt).
+InMemoryBus permite desarrollar y testear sin broker. KafkaBus usa confluent-kafka
+(el cliente de Kafka que también usa el origen verificado de dlt) contra un broker
+local que arranca scripts/kafka-start.ps1, sin contenedores.
 """
 from __future__ import annotations
 
@@ -73,7 +74,7 @@ class KafkaBus:
     """Implementación sobre Apache Kafka (confluent-kafka).
 
     Productor idempotente con acks=all. Consumidor SIN auto-commit: el commit lo
-    hace el código tras cargar con dlt. Se necesita un broker (ver docker-compose.yml).
+    hace el código tras cargar con dlt. Se necesita un broker (scripts/kafka-start.ps1).
     """
 
     def __init__(self, bootstrap_servers: str, client_id: str = "lol-ingestion"):

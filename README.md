@@ -33,8 +33,9 @@ ingestion/       clients.py · transform.py · sources.py (dlt) · pipeline.py
 consume_kafka_retry.py  consumidor Kafka con grupo persistente y lago reutilizable
 tests/           pruebas de API, ingesta, almacén y Kafka (una requiere un broker real)
 docs/            architecture.svg (diagrama que se muestra arriba)
+scripts/         kafka-install/start/stop.ps1 · kafka.properties · kafka-log4j.properties
 .dlt/            config.toml (se sube) · secrets.toml (local, ignorado por Git)
-render.yaml · docker-compose.yml · requirements*.txt
+render.yaml · requirements*.txt
 ```
 
 ## Puesta en marcha
@@ -52,7 +53,7 @@ curl -X POST "localhost:8000/admin/clock/advance?minutes=360" -H "X-Admin-Token:
 python -m ingestion.run direct --max-timelines 20     # solo baja lo nuevo y lo revisado
 
 # 3) Modo bus (productor + consumidor) y análisis
-python -m ingestion.run pipeline --max-timelines 20   # bus en memoria, sin Docker
+python -m ingestion.run pipeline --max-timelines 20   # bus en memoria, sin broker
 python -m ingestion.run report                        # benchmarks y comparación de un jugador
 ```
 
@@ -69,16 +70,20 @@ Abre `http://127.0.0.1:8000/dev` (o `http://127.0.0.1:8000`, que redirige al pan
 
 La sección **Datos de la API en tablas** carga bajo demanda partidas Riot y sus participantes, partidas profesionales y picks, vídeos, o los eventos y la evolución minuto a minuto de un timeline. La tabla Riot muestra el total de partidas visibles, permite elegir entre 10 y 100 filas por página y navegar hasta las más recientes; avanzar o reiniciar el reloj local actualiza la tabla si ya se había cargado. El filtro permite buscar por cualquier columna de las filas cargadas, incluidas las tablas relacionadas de jugadores y picks; es exacto por defecto y también ofrece coincidencia parcial, y trabaja sobre la página actual, no sobre todas las páginas sin cargar. Para facilitar la lectura, muestra `UTILITY` como `SUPPORT` en los valores de rol; la respuesta JSON de la API no se altera. El panel también muestra las respuestas y el historial, y permite ejecutar `pytest`. El historial se guarda solo en memoria y no registra query strings ni credenciales. El panel requiere una conexión local y está desactivado por defecto; no habilites `ENABLE_DEV_DASHBOARD` en Render.
 
-**Con Kafka real (PowerShell):**
+**Con Kafka real (PowerShell), sin Docker:**
 
 ```powershell
-docker compose up -d kafka
+scripts\kafka-install.ps1                  # una sola vez: descarga Kafka 3.7 en %LOCALAPPDATA%\kafka
+scripts\kafka-start.ps1                    # broker en localhost:9092
 $env:KAFKA_BOOTSTRAP = "localhost:9092"
 python -m ingestion.run produce --bus kafka --state data/state_kafka --max-timelines 5
 python .\consume_kafka_retry.py
+scripts\kafka-stop.ps1                     # los datos de data\kafka se conservan
 ```
 
-El consumidor reutiliza siempre `data/lake_kafka` y `data/state_kafka`; el grupo `lake-loader-kafka` conserva sus offsets entre ejecuciones. Un grupo nuevo empieza a leer desde el principio de los mensajes retenidos en Kafka, por lo que su primera ejecución puede volver a añadir filas al lago Parquet. DuckDB deduplica las vistas `silver_*`; después, el mismo grupo continúa desde los offsets confirmados.
+Necesita **Java 8 o superior** en el PATH (Kafka 3.7 es la última versión que funciona con Java 8). El broker corre en modo KRaft, sin ZooKeeper y sin contenedores: los scripts invocan la clase `kafka.Kafka` directamente porque los `.bat` oficiales fallan en Windows con «la línea escrita es demasiado larga». Datos en `data/kafka`, consola en `data/kafka.log`.
+
+El consumidor reutiliza siempre `data/lake_kafka` y `data/state_kafka`; el grupo `lake-loader-kafka` conserva sus offsets entre ejecuciones. Un grupo nuevo empieza a leer desde el principio de los mensajes retenidos en Kafka, por lo que su primera ejecución puede volver a añadir filas al lago Parquet: `drain()` espera unos segundos a que el grupo termine de unirse antes de darse por vacío. DuckDB deduplica las vistas `silver_*`; después, el mismo grupo continúa desde los offsets confirmados.
 
 **En Render:** subir el repositorio a GitHub y en Render elegir *New > Blueprint* apuntando a `render.yaml`. Copia las claves que genera el panel al archivo local `.dlt/secrets.toml` (no se sube a GitHub) y configura la URL en `.dlt/config.toml` o en `SOURCES__API__BASE_URL`.
 
@@ -94,6 +99,8 @@ El consumidor reutiliza siempre `data/lake_kafka` y `data/state_kafka`; el grupo
 | 4 | Vistas DuckDB sobre Parquet (silver/gold) | `test_warehouse.py` |
 | 5 | Bus Kafka: productor, consumidor, commit tras carga | `test_kafka_flow.py` · `test_kafka_integration.py` |
 
+El paso 5 incluye un test de regresión (`test_drain_waits_for_a_group_that_is_still_rebalancing`): un grupo de consumidores nuevo tarda en unirse y sus primeros `poll()` vuelven vacíos, así que `drain()` no puede darse por terminado a la primera pasada. Sin esa espera, el consumidor terminaba «sin mensajes» dejando el topic lleno.
+
 ## Decisiones de diseño
 
 - **EL antes que T.** Se carga el dato en bruto y la transformación (dedupe, métricas) se hace después en DuckDB.
@@ -105,7 +112,7 @@ El consumidor reutiliza siempre `data/lake_kafka` y `data/state_kafka`; el grupo
 
 ## Pruebas y limitaciones
 
-- **Kafka real y el flujo productor-consumidor se probaron localmente.** El test de integración verifica publicación, confirmación y reentrega (`$env:KAFKA_BOOTSTRAP="localhost:9092"; python -m pytest -q tests/test_kafka_integration.py`).
+- **Kafka real y el flujo productor-consumidor se probaron localmente.** El test de integración verifica publicación, confirmación y reentrega (`$env:KAFKA_BOOTSTRAP="localhost:9092"; python -m pytest -q tests/test_kafka_integration.py`) contra el broker nativo de `scripts\kafka-start.ps1`.
 - **El API sintético desplegado en Render también se probó.** En el plan gratuito puede dormirse y, al reiniciarse, pierde su estado en memoria. El cursor local puede quedar por delante de los datos reiniciados; comprueba el estado antes de reiniciar la ingesta y no borres `data/` sin decidir primero qué lago o cursor quieres conservar.
 - **El destino es el disco local.** Para MinIO/S3 basta cambiar `bucket_url` y las credenciales en `secrets.toml`, como en los apuntes, pero no se ha probado aquí.
 - **Los datos sintéticos no tienen valor estadístico real.** Sirven para probar el sistema, no para sacar conclusiones sobre el juego.

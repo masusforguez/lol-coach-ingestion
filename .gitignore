@@ -5,3 +5,6 @@ __pycache__/
 *.duckdb
 .env
 .commandcode/
+*.egg-info/
+.venv/
+venv/

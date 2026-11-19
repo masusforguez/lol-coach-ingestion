@@ -1,5 +1,5 @@
 """Prueba contra un broker Kafka REAL. Se salta si no hay broker.
-Uso:  docker compose up -d   y luego   KAFKA_BOOTSTRAP=localhost:9092 pytest tests/test_kafka_integration.py"""
+Uso:  scripts\\kafka-start.ps1  y luego  $env:KAFKA_BOOTSTRAP="localhost:9092"; pytest tests/test_kafka_integration.py"""
 import os
 import uuid
 

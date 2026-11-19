@@ -2,7 +2,7 @@
 
   python -m ingestion.run direct     dlt consulta las APIs (incremental) y escribe Parquet
   python -m ingestion.run produce    productor: APIs -> Kafka (topics lol.raw.*)
-  python -m ingestion.run consume    consumidor: Kafka -> dlt -> Parquet
+  python -m ingestion.run consume    consumidor: Kafka -> dlt -> Parquet (--group conserva offsets)
   python -m ingestion.run pipeline   produce + consume seguidos (sirve con bus en memoria)
   python -m ingestion.run report     DuckDB: benchmarks y comparación de un jugador
 """
@@ -34,6 +34,8 @@ def main(argv=None):
     ap.add_argument("--page-size", type=int, default=50)
     ap.add_argument("--max-timelines", type=int, default=None, help="presupuesto de timelines por pasada")
     ap.add_argument("--puuid", default=None, help="jugador para el informe")
+    ap.add_argument("--group", default=os.getenv("KAFKA_CONSUMER_GROUP", "lake-loader"),
+                    help="grupo de consumidores de Kafka (conserva los offsets)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     os.makedirs(args.state, exist_ok=True)
@@ -55,18 +57,25 @@ def main(argv=None):
     if args.command in ("consume", "pipeline"):
         if args.command == "consume":
             bus = make_bus(args.bus)
-        c = LakeConsumer(bus, args.lake, f"{args.state}/dlt")
+        c = LakeConsumer(bus, args.lake, f"{args.state}/dlt", group=args.group)
         print("cargado:", c.drain())
     if args.command == "report":
         con = wh.connect()
         views = wh.build_views(con, args.lake)
+        if not views:
+            print(f"No hay datos en {args.lake}: ejecuta antes 'direct', 'pipeline' o 'consume'.")
+            return
         print("vistas:", ", ".join(views))
         if "gold_benchmarks" in views:
             print("\nBenchmarks por rango y rol (mediana de CS/min):")
             for r in con.execute("""select rank_tier, role, n, round(cs_p25,2), round(cs_p50,2), round(cs_p75,2)
                                     from gold_benchmarks where n >= 20 order by rank_tier, role limit 12""").fetchall():
                 print("  ", r)
-            puuid = args.puuid or con.execute("select puuid from silver_participants limit 1").fetchone()[0]
+            row = con.execute("select puuid from silver_participants limit 1").fetchone()
+            if row is None:
+                print("\nSin participantes cargados: no hay jugador que comparar.")
+                return
+            puuid = args.puuid or row[0]
             print(f"\nJugador {puuid} frente a la mediana de su rango y rol:")
             for r in wh.player_vs_benchmark(con, puuid):
                 print("  ", tuple(round(x, 2) if isinstance(x, float) else x for x in r))
