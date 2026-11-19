@@ -15,7 +15,7 @@ def local_client():
 
 
 def test_dashboard_is_disabled_by_default():
-    client = TestClient(create_app(Settings()))
+    client = TestClient(create_app(Settings(dev_dashboard_enabled=False)))
     assert client.get("/dev").status_code == 404
     assert client.post("/dev/run-tests").status_code == 404
 
