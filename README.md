@@ -15,6 +15,8 @@ Los datos son inventados (generados con Faker): no vienen de Riot ni de ninguna 
  └────────────────────────────┘              (respeta límites)   (commit tras cargar)                              (benchmarks)
 ```
 
+Diagrama detallado: [arquitectura del proyecto](docs/project-architecture.html).
+
 - **Riot (simulada):** partidas con 10 participantes (lista anidada) y su timeline minuto a minuto. Límite de peticiones por ventana, con revisiones posteriores de algunas partidas.
 - **Proveedor de pago (simulado):** partidas profesionales con paginación por cursor y créditos que se agotan.
 - **Vídeo (simulada, estilo YouTube/Twitch):** metadatos de vídeos de rangos altos con cuota diaria.
