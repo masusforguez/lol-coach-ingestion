@@ -27,6 +27,8 @@ def test_dashboard_is_served_when_enabled():
     assert "LoL Coach · Consola de pruebas" in response.text
     assert "URL de .dlt/config.toml" in response.text
     assert "Datos de la API en tablas" in response.text
+    assert 'value.toUpperCase() === "UTILITY"' in response.text
+    assert 'cell.textContent = "SUPPORT"' in response.text
     assert 'data-table="riot"' in response.text
     assert 'data-table="provider"' in response.text
     assert 'data-table="videos"' in response.text

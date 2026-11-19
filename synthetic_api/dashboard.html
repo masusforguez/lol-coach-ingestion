@@ -244,6 +244,8 @@
             cell.textContent = JSON.stringify(value);
           } else if (value === null || value === undefined) {
             cell.textContent = "—";
+          } else if (column === "role" && typeof value === "string" && value.toUpperCase() === "UTILITY") {
+            cell.textContent = "SUPPORT";
           } else {
             cell.textContent = value;
           }
