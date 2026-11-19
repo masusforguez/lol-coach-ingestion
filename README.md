@@ -18,7 +18,7 @@ Los datos son inventados (generados con Faker): no vienen de Riot ni de ninguna 
 - **Riot (simulada):** partidas con 10 participantes (lista anidada) y su timeline minuto a minuto. Límite de peticiones por ventana, con revisiones posteriores de algunas partidas.
 - **Proveedor de pago (simulado):** partidas profesionales con paginación por cursor y créditos que se agotan.
 - **Vídeo (simulada, estilo YouTube/Twitch):** metadatos de vídeos de rangos altos con cuota diaria.
-- **Reloj simulado:** `POST /admin/clock/advance?minutes=N` hace "pasar el tiempo" para que aparezcan datos nuevos y revisados sin esperar.
+- **Reloj simulado:** `POST /admin/clock/advance?minutes=N` adelanta solo el tiempo interno de la API. Al avanzar, se completan partidas nuevas (su duración simulada es de 20-40 minutos), aparecen partidas profesionales cada 10 minutos y vídeos cada 20; el 5 % de las partidas se revisa dos horas después y la cuota de vídeo se renueva al cambiar el día simulado. No cambia la hora del ordenador.
 
 ## Estructura
 
@@ -62,7 +62,7 @@ uvicorn synthetic_api.main:app --host 127.0.0.1 --port 8000
 
 Abre `http://127.0.0.1:8000/dev` (o `http://127.0.0.1:8000`, que redirige al panel cuando está habilitado). El selector permite probar la API local o consultar la URL de `.dlt/config.toml` (Render). Para Render, el proceso local lee `sources.api.riot_token`, `sources.api.provider_token` y `sources.api.video_key` de `.dlt/secrets.toml` o del entorno y reenvía solo las rutas de lectura permitidas. Las claves no se envían al navegador ni se guardan en el historial. El botón de estado remoto requiere además `sources.api.admin_token`; avanzar o reiniciar el reloj de Render no está permitido desde el panel.
 
-La sección **Datos de la API en tablas** carga bajo demanda partidas Riot y sus participantes, partidas profesionales y picks, vídeos, o los eventos y la evolución minuto a minuto de un timeline. Para facilitar la lectura, muestra `UTILITY` como `SUPPORT` en los valores de rol; la respuesta JSON de la API no se altera. El panel también muestra las respuestas y el historial, permite avanzar o reiniciar el reloj de la API local y ejecutar `pytest`. El historial se guarda solo en memoria y no registra query strings ni credenciales. El panel requiere una conexión local y está desactivado por defecto; no habilites `ENABLE_DEV_DASHBOARD` en Render.
+La sección **Datos de la API en tablas** carga bajo demanda partidas Riot y sus participantes, partidas profesionales y picks, vídeos, o los eventos y la evolución minuto a minuto de un timeline. La tabla Riot muestra el total de partidas visibles, permite elegir entre 10 y 100 filas por página y navegar hasta las más recientes; avanzar o reiniciar el reloj local actualiza la tabla si ya se había cargado. Para facilitar la lectura, muestra `UTILITY` como `SUPPORT` en los valores de rol; la respuesta JSON de la API no se altera. El panel también muestra las respuestas y el historial, y permite ejecutar `pytest`. El historial se guarda solo en memoria y no registra query strings ni credenciales. El panel requiere una conexión local y está desactivado por defecto; no habilites `ENABLE_DEV_DASHBOARD` en Render.
 
 **Con Kafka real (PowerShell):**
 

@@ -51,6 +51,9 @@
     button.warn { border-color: #7a3d4a; background: #3b202c; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .grid-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .pagination { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 12px; }
+    .pagination[hidden] { display: none; }
+    .pagination label { min-width: 100px; }
     .row { display: flex; align-items: end; gap: 8px; }
     .row label { flex: 1; }
     .hint { margin: 10px 0 0; font-size: 12px; }
@@ -170,6 +173,21 @@
             <button data-table="videos">Cargar vídeos</button>
             <button data-table="timeline">Cargar timeline del ID indicado</button>
           </div>
+          <div id="riot-pagination" class="pagination" hidden>
+            <button id="riot-first">Primera</button>
+            <button id="riot-previous">Anterior</button>
+            <span id="riot-page-info" class="muted"></span>
+            <button id="riot-next">Siguiente</button>
+            <button id="riot-last">Últimas</button>
+            <label>Filas por página
+              <select id="riot-page-size">
+                <option value="10" selected>10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+          </div>
           <h3 id="primary-table-title">Resultados</h3>
           <div class="data-table-wrap">
             <table><thead id="data-table-head"><tr><th>Sin datos</th></tr></thead><tbody id="data-table-body"><tr><td class="empty">Elige una fuente para cargar sus datos.</td></tr></tbody></table>
@@ -201,6 +219,10 @@
     const byId = id => document.getElementById(id);
     const responseStatus = byId("response-status");
     const responseBody = byId("response-body");
+    let riotPageSize = 10;
+    let riotOffset = 0;
+    let riotTotal = 0;
+    let riotLoaded = false;
 
     function isRemote() {
       return byId("target").value === "render";
@@ -282,6 +304,57 @@
       byId("table-target").textContent = isRemote() ? "Destino: Render" : "Destino: API local";
     }
 
+    function updateRiotPagination() {
+      const end = Math.min(riotOffset + riotPageSize, riotTotal);
+      byId("riot-page-info").textContent = riotTotal
+        ? `Mostrando ${riotOffset + 1}-${end} de ${riotTotal} partidas`
+        : "No hay partidas disponibles";
+      byId("riot-first").disabled = riotOffset === 0;
+      byId("riot-previous").disabled = riotOffset === 0;
+      byId("riot-next").disabled = riotOffset + riotPageSize >= riotTotal;
+      byId("riot-last").disabled = riotOffset + riotPageSize >= riotTotal;
+    }
+
+    async function loadRiotPage(offset) {
+      const pageOffset = Math.max(0, offset);
+      const payload = await request(
+        "/riot/matches",
+        `/riot/matches?limit=${riotPageSize}&offset=${pageOffset}`,
+        { headers: { "X-Riot-Token": byId("riot-token").value } },
+      );
+      if (!payload || !Array.isArray(payload.items) || !Number.isInteger(payload.total)) {
+        byId("riot-pagination").hidden = true;
+        return tableError("No se pudieron cargar las partidas Riot.");
+      }
+
+      riotTotal = payload.total;
+      const lastOffset = Math.max(0, Math.floor((riotTotal - 1) / riotPageSize) * riotPageSize);
+      if (pageOffset > lastOffset) return loadRiotPage(lastOffset);
+
+      riotOffset = pageOffset;
+      riotLoaded = true;
+      byId("riot-pagination").hidden = false;
+      updateRiotPagination();
+      const matches = payload.items;
+      renderPrimaryTable("Partidas Riot", matches.map(match => ({
+        match_id: match.match_id,
+        rank_tier: match.rank_tier,
+        patch: match.patch,
+        game_duration: match.game_duration,
+        winning_team: match.winning_team,
+        updated_at: match.updated_at,
+        data_revision: match.data_revision,
+      })));
+      const participants = matches.flatMap(match => (match.participants || []).map(participant => ({
+        match_id: match.match_id,
+        ...participant,
+      })));
+      renderRelatedTable("Participantes de las partidas cargadas", participants);
+      if (matches.length) byId("match-id").value = matches[0].match_id;
+      byId("table-message").textContent =
+        `Mostrando ${matches.length} partidas de ${riotTotal} disponibles y ${participants.length} participantes.`;
+    }
+
     async function request(label, path, options = {}) {
       const started = performance.now();
       const target = isRemote() ? "Render" : "Local";
@@ -318,28 +391,7 @@
         setTableTarget();
 
         if (action === "riot") {
-          const payload = await request("/riot/matches", "/riot/matches?limit=5", {
-            headers: { "X-Riot-Token": byId("riot-token").value },
-          });
-          if (!payload || !Array.isArray(payload.items)) return tableError("No se pudieron cargar las partidas Riot.");
-          const matches = payload.items;
-          renderPrimaryTable("Partidas Riot", matches.map(match => ({
-            match_id: match.match_id,
-            rank_tier: match.rank_tier,
-            patch: match.patch,
-            game_duration: match.game_duration,
-            winning_team: match.winning_team,
-            updated_at: match.updated_at,
-            data_revision: match.data_revision,
-          })));
-          const participants = matches.flatMap(match => (match.participants || []).map(participant => ({
-            match_id: match.match_id,
-            ...participant,
-          })));
-          renderRelatedTable("Participantes de las partidas cargadas", participants);
-          if (matches.length) byId("match-id").value = matches[0].match_id;
-          byId("table-message").textContent = `${matches.length} partidas y ${participants.length} participantes.`;
-          return;
+          return loadRiotPage(riotOffset);
         }
 
         if (action === "provider") {
@@ -418,6 +470,18 @@
       });
     });
 
+    byId("riot-first").addEventListener("click", () => loadRiotPage(0));
+    byId("riot-previous").addEventListener("click", () => loadRiotPage(riotOffset - riotPageSize));
+    byId("riot-next").addEventListener("click", () => loadRiotPage(riotOffset + riotPageSize));
+    byId("riot-last").addEventListener("click", () => {
+      const offset = Math.max(0, Math.floor((riotTotal - 1) / riotPageSize) * riotPageSize);
+      loadRiotPage(offset);
+    });
+    byId("riot-page-size").addEventListener("change", event => {
+      riotPageSize = Number(event.currentTarget.value);
+      loadRiotPage(0);
+    });
+
     async function loadHistory() {
       try {
         const response = await fetch("/dev/api-requests");
@@ -459,7 +523,7 @@
     }
 
     document.querySelectorAll("[data-request]").forEach(button => {
-      button.addEventListener("click", () => {
+      button.addEventListener("click", async () => {
         const action = button.dataset.request;
         if (action === "health") return request("/health", "/health");
         if (action === "state") return request("/admin/state", "/admin/state", {
@@ -494,16 +558,30 @@
         }
         if (action === "advance") {
           const query = new URLSearchParams({ minutes: byId("minutes").value });
-          return request("/admin/clock/advance", `/admin/clock/advance?${query}`, {
+          const wasOnLastPage = riotLoaded && riotOffset + riotPageSize >= riotTotal;
+          const payload = await request("/admin/clock/advance", `/admin/clock/advance?${query}`, {
             method: "POST",
             headers: { "X-Admin-Token": byId("admin-token").value },
           });
+          if (payload && Number.isInteger(payload.visible_matches) && riotLoaded) {
+            riotTotal = payload.visible_matches;
+            if (wasOnLastPage && riotTotal > 0) {
+              riotOffset = Math.floor((riotTotal - 1) / riotPageSize) * riotPageSize;
+            }
+            await loadRiotPage(riotOffset);
+          }
+          return payload;
         }
         if (action === "reset") {
-          return request("/admin/reset", "/admin/reset", {
+          const payload = await request("/admin/reset", "/admin/reset", {
             method: "POST",
             headers: { "X-Admin-Token": byId("admin-token").value },
           });
+          if (payload && payload.status === "reset" && riotLoaded) {
+            riotOffset = 0;
+            await loadRiotPage(0);
+          }
+          return payload;
         }
       });
     });
