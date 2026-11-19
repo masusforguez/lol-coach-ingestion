@@ -17,6 +17,7 @@ def local_client():
 def test_dashboard_is_disabled_by_default():
     client = TestClient(create_app(Settings(dev_dashboard_enabled=False)))
     assert client.get("/dev").status_code == 404
+    assert client.get("/").status_code == 404
     assert client.post("/dev/run-tests").status_code == 404
 
 
@@ -30,6 +31,9 @@ def test_dashboard_is_served_when_enabled():
     assert 'data-table="provider"' in response.text
     assert 'data-table="videos"' in response.text
     assert 'data-table="timeline"' in response.text
+    redirect = local_client().get("/", follow_redirects=False)
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == "/dev"
 
 
 def test_dashboard_rejects_non_loopback_clients():

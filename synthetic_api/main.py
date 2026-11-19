@@ -30,7 +30,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request as URLRequest, urlopen
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from . import generator as g
 
@@ -140,6 +140,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def dev_dashboard(request: Request):
             require_local_request(request)
             return HTMLResponse(dashboard_html)
+
+        @app.get("/", include_in_schema=False)
+        def dashboard_root_redirect(request: Request):
+            require_local_request(request)
+            return RedirectResponse("/dev")
 
         @app.get("/dev/api-requests", include_in_schema=False)
         def recent_api_requests(request: Request):
