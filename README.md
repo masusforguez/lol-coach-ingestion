@@ -34,9 +34,9 @@ synthetic_api/   generator.py · main.py (FastAPI con límites) · dashboard.htm
 ingestion/       clients.py · transform.py · sources.py (dlt) · pipeline.py
                  bus.py · producer.py · consumer.py (Kafka) · warehouse.py (DuckDB) · run.py (CLI)
 consume_kafka_retry.py  consumidor Kafka con grupo persistente y lago reutilizable
-tests/           53 pruebas: API, generador, ingesta directa, almacén, bus y panel
+tests/           54 pruebas: API, generador, ingesta directa, almacén, bus y panel
 docs/            architecture.svg (el diagrama que se muestra arriba)
-scripts/         kafka-install/start/stop.ps1 · kafka.properties · kafka-log4j.properties
+scripts/         kafka.py (install/start/stop/status) · kafka.properties · kafka-log4j.properties
 .dlt/            config.toml (se sube) · secrets.toml (local, ignorado por Git)
 render.yaml · requirements.txt · requirements-api.txt
 ```
@@ -106,15 +106,19 @@ El panel es solo una herramienta de desarrollo: no forma parte de la ingesta y n
 Kafka era la única pieza que pedía contenedores. Ya no: corre como un proceso Java normal en modo KRaft (sin ZooKeeper).
 
 ```powershell
-scripts\kafka-install.ps1                  # una sola vez: descarga Kafka 3.7 en %LOCALAPPDATA%\kafka
-scripts\kafka-start.ps1                    # broker en localhost:9092
+python scripts\kafka.py install            # una sola vez: descarga Kafka 3.7 en la carpeta del usuario
+python scripts\kafka.py start              # broker en localhost:9092
 $env:KAFKA_BOOTSTRAP = "localhost:9092"
 python -m ingestion.run produce --bus kafka --state data/state_kafka --max-timelines 5
 python .\consume_kafka_retry.py
-scripts\kafka-stop.ps1                     # los datos de data\kafka se conservan
+python scripts\kafka.py stop               # los datos de data/kafka se conservan
 ```
 
-Necesita **Java 8 o superior** en el PATH (Kafka 3.7 es la última versión que funciona con Java 8). Los scripts invocan la clase `kafka.Kafka` con classpath wildcard porque los `.bat` oficiales fallan en Windows con «la línea escrita es demasiado larga» (Windows limita la longitud del comando y Kafka tiene ~120 JARs). Datos del broker en `data/kafka`, consola en `data/kafka.log`. Con Git Bash o Linux, los scripts `bin/kafka-server-start.sh` de la distribución funcionan tal cual.
+En Linux o macOS es el mismo comando con barras normales (`python scripts/kafka.py start`): el script es Python y funciona igual en los tres sistemas. También hay `python scripts/kafka.py status`, y `--port`, `--heap` y `--home` si necesitas cambiarlos.
+
+Necesita **Java 8 o superior** en el PATH (Kafka 3.7 es la última versión que funciona con Java 8). El script invoca la clase `kafka.Kafka` con classpath wildcard porque los lanzadores oficiales estorban aquí: los `.bat` fallan en Windows con «la línea escrita es demasiado larga» (Windows limita la longitud del comando y Kafka trae ~120 JARs) y los `.sh` añaden una capa que no hace falta. Datos del broker en `data/kafka`, consola en `data/kafka.log`.
+
+**Ojo con un Java de 32 bits.** Kafka mapea sus ficheros de log en memoria y un JVM de 32 bits solo tiene ~1,5 GB de espacio de direcciones: en cuanto `data/kafka` crece, el broker muere con `OutOfMemoryError: Map failed` (un mensaje que no explica nada). El script avisa si detecta un Java de 32 bits. Si te pasa, borra `data/kafka` y usa un JDK de 64 bits.
 
 El consumidor reutiliza siempre `data/lake_kafka` y `data/state_kafka`; el grupo `lake-loader-kafka` conserva sus offsets entre ejecuciones. Un grupo **nuevo** empieza a leer desde el principio de los mensajes retenidos, así que su primera ejecución vuelve a añadir filas al lago Parquet: `drain()` espera unos segundos a que el grupo termine de unirse antes de darse por vacío. DuckDB deduplica las vistas `silver_*`; después, el mismo grupo continúa desde los offsets confirmados. Para usar otro grupo: `--group otro-nombre` o `KAFKA_CONSUMER_GROUP`.
 
@@ -135,7 +139,7 @@ El enunciado pedía desarrollar el sistema por pasos para poder revisar el códi
 | 5 | Bus Kafka: productor, consumidor, commit tras carga | `test_kafka_flow.py` (11) · `test_kafka_integration.py` (1) |
 | + | Panel de desarrollo local y su test | `test_dashboard.py` (9) |
 
-Son **53 pruebas**: 52 se ejecutan siempre y la de integración con Kafka necesita un broker real (se omite si no hay). Con `scripts\kafka-start.ps1` en marcha pasan las 53.
+Son **54 pruebas**: 53 se ejecutan siempre y la de integración con Kafka necesita un broker real (se omite si no hay). Con `python scripts\kafka.py start` en marcha pasan las 54.
 
 Dos de esos tests nacieron de un fallo encontrado durante el desarrollo, y por eso están señalados en el código:
 
@@ -153,7 +157,7 @@ Dos de esos tests nacieron de un fallo encontrado durante el desarrollo, y por e
 
 ## Pruebas y limitaciones
 
-- **Kafka real y el flujo productor-consumidor se probaron localmente.** El test de integración verifica publicación, confirmación y reentrega (`$env:KAFKA_BOOTSTRAP="localhost:9092"; python -m pytest -q tests/test_kafka_integration.py`) contra el broker nativo de `scripts\kafka-start.ps1`.
+- **Kafka real y el flujo productor-consumidor se probaron localmente.** El test de integración verifica publicación, confirmación y reentrega (`$env:KAFKA_BOOTSTRAP="localhost:9092"; python -m pytest -q tests/test_kafka_integration.py`) contra el broker nativo de `python scripts\kafka.py start`.
 - **El API sintético desplegado en Render también se probó.** En el plan gratuito puede dormirse y, al reiniciarse, pierde su estado en memoria. El cursor local puede quedar por delante de los datos reiniciados; comprueba el estado antes de reiniciar la ingesta y no borres `data/` sin decidir primero qué lago o cursor quieres conservar.
 - **El destino es el disco local.** Para MinIO/S3 basta cambiar `bucket_url` y las credenciales en `secrets.toml`, como en los apuntes, pero no se ha probado aquí.
 - **Los datos sintéticos no tienen valor estadístico real.** Sirven para probar el sistema, no para sacar conclusiones sobre el juego.
